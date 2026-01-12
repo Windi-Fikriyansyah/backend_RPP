@@ -2,11 +2,12 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import StreamingResponse
 import json
 import re
+import traceback
 from app.utils.time_utils import get_jakarta_time
 import io
 from fpdf import FPDF
 from docx import Document
-from docx.shared import Pt
+from docx.shared import Pt, RGBColor
 from app.schemas.rpp_schema import RPPRequest, RPPResponse, RPPData
 from app.prompts.rpp_prompt import build_rpp_prompt
 from app.gemini_client import gemini_client
@@ -21,6 +22,28 @@ from sqlalchemy.future import select
 from app.models.curriculum import Subject, CurriculumGoal
 
 from datetime import datetime, date
+
+def clean_text(text: str) -> str:
+    """Clean text to be compatible with FPDF's default latin-1 fonts."""
+    if not text:
+        return ""
+    # Standardize spaces and common unicode characters
+    text = str(text)
+    text = text.replace('\r', '')
+    text = text.replace('\u2013', '-').replace('\u2014', '-').replace('\u2019', "'").replace('\u2018', "'")
+    text = text.replace('\u201c', '"').replace('\u201d', '"').replace('\u2022', '\x95')
+    # Force to latin-1, replacing anything else with '?'
+    # This prevents UnicodeEncodeError in fpdf2
+    return text.encode('latin-1', 'replace').decode('latin-1')
+
+def clean_markdown_symbols(text: str) -> str:
+    """Extra robust function to remove markdown symbols like **, *, etc."""
+    if not text: return ""
+    # Remove bold/italic markers
+    text = text.replace('***', '').replace('**', '').replace('*', '')
+    # Remove underline markers if any
+    text = text.replace('__', '').replace('_', '')
+    return text.strip()
 
 @router.post("/generate", response_model=RPPResponse)
 async def generate_rpp(
@@ -154,6 +177,12 @@ class ExportQuizRequest(BaseModel):
     quiz_data: dict
     mapel: str
     topik: str
+
+class ExportRPPRequest(BaseModel):
+    content_markdown: str
+    mapel: str
+    topik: str
+    kelas: str = "Semua"
 
 @router.post("/generate-ppt")
 async def generate_ppt_route(
@@ -348,9 +377,9 @@ async def export_quiz_pdf(req: ExportQuizRequest):
         
         # Header
         pdf.set_font("Arial", 'B', 16)
-        pdf.cell(0, 10, f"Latihan Soal: {req.topik}", ln=True, align='C')
+        pdf.cell(0, 10, clean_text(f"Latihan Soal: {req.topik}"), ln=True, align='C')
         pdf.set_font("Arial", '', 12)
-        pdf.cell(0, 10, f"Mata Pelajaran: {req.mapel}", ln=True, align='C')
+        pdf.cell(0, 10, clean_text(f"Mata Pelajaran: {req.mapel}"), ln=True, align='C')
         pdf.ln(5)
         
         # Questions
@@ -358,24 +387,29 @@ async def export_quiz_pdf(req: ExportQuizRequest):
         for q in questions:
             pdf.set_font("Arial", 'B', 12)
             # Question text
-            txt = f"{q.get('no', '')}. {q.get('pertanyaan', '')}"
+            txt = clean_text(f"{q.get('no', '')}. {q.get('pertanyaan', '')}")
             pdf.multi_cell(0, 10, txt)
             
             pdf.set_font("Arial", '', 11)
             options = q.get("options", {})
             for key, val in options.items():
-                pdf.cell(0, 8, f"   {key}. {val}", ln=True)
+                pdf.cell(0, 8, clean_text(f"   {key}. {val}"), ln=True)
             pdf.ln(5)
 
         # Buffer
-        pdf_bytes = pdf.output(dest='S')
-        return Response(
-            content=pdf_bytes,
+        pdf_bytes = pdf.output()
+        safe_topik = re.sub(r'[^\w\s-]', '', req.topik).strip().replace(" ", "_")
+        return StreamingResponse(
+            io.BytesIO(pdf_bytes),
             media_type="application/pdf",
-            headers={"Content-Disposition": f"attachment; filename=Quiz_{req.topik}.pdf"}
+            headers={
+                "Content-Disposition": f"attachment; filename=Quiz_{safe_topik}.pdf",
+                "Access-Control-Expose-Headers": "Content-Disposition"
+            }
         )
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Gagal export PDF: {str(e)}")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Gagal export PDF Quiz: {str(e)}")
 
 @router.post("/export-quiz-word")
 async def export_quiz_word(req: ExportQuizRequest):
@@ -421,6 +455,289 @@ async def export_quiz_word(req: ExportQuizRequest):
         raise HTTPException(status_code=500, detail=f"Gagal export Word: {str(e)}")
 
 # --- HISTORY ENDPOINTS ---
+
+@router.post("/export-pdf")
+async def export_rpp_pdf(req: ExportRPPRequest):
+    try:
+        # Robust input sanitization
+        topik = str(req.topik or "Tanpa Judul")
+        mapel = str(req.mapel or "Mata Pelajaran")
+        kelas = str(req.kelas or "Semua")
+        content_markdown = str(req.content_markdown or "")
+
+        if topik.lower() == "null": topik = "Tanpa Judul"
+        if mapel.lower() == "null": mapel = "Mata Pelajaran"
+        if kelas.lower() == "null": kelas = "Semua"
+        if content_markdown.lower() == "null": content_markdown = ""
+
+        print(f"DEBUG: Exporting Synchronized PDF for {topik}...")
+        pdf = FPDF()
+        pdf.add_page()
+        
+        # --- HEADER (Matches Word/Modal) ---
+        pdf.set_y(15)
+        pdf.set_x(10)
+        pdf.set_text_color(0, 0, 0)
+        pdf.set_font("Arial", 'B', 11)
+        pdf.cell(190, 10, "MODUL AJAR (RPP)", ln=True, align='C')
+        
+        pdf.set_font("Arial", 'B', 18)
+        pdf.set_x(10)
+        pdf.multi_cell(190, 12, clean_text(clean_markdown_symbols(topik)), align='C')
+        
+        pdf.set_font("Arial", 'I', 10)
+        pdf.set_x(10)
+        meta_text_clean = clean_markdown_symbols(f"{mapel} | Kelas {kelas}")
+        pdf.cell(190, 8, clean_text(meta_text_clean), ln=True, align='C')
+        
+        # Separator Line
+        pdf.ln(2)
+        pdf.set_draw_color(200, 200, 200)
+        pdf.line(20, pdf.get_y(), 190, pdf.get_y())
+        pdf.ln(10)
+        
+        # Content Parsing
+        lines = content_markdown.split('\n')
+        pdf.set_font("Arial", '', 11)
+        
+        i = 0
+        while i < len(lines):
+            line = lines[i].strip()
+            
+            # Table detection
+            is_table_start = '|' in line and i + 1 < len(lines) and re.match(r'^\s*\|?[:\-\s|]+\|?[:\-\s|]*\s*$', lines[i+1])
+            if is_table_start:
+                table_data = []
+                header_line = line.strip().strip('|')
+                headers = [clean_text(clean_markdown_symbols(c)) for c in header_line.split('|')]
+                i += 2
+                while i < len(lines):
+                    row_line = lines[i].strip()
+                    if not '|' in row_line and not row_line.startswith('|'): break
+                    row_content = row_line.strip('|')
+                    row = [clean_text(clean_markdown_symbols(c)) for c in row_content.split('|')]
+                    if row:
+                        while len(row) < len(headers): row.append("")
+                        table_data.append(row[:len(headers)])
+                    i += 1
+                
+                if headers or table_data:
+                    pdf.ln(5)
+                    pdf.set_line_width(0.2)
+                    with pdf.table(width=190, padding=2, line_height=7) as table:
+                        if headers:
+                            header_row = table.row()
+                            pdf.set_font("Arial", 'B', 10)
+                            for h in headers: header_row.cell(h)
+                        pdf.set_font("Arial", '', 10)
+                        for r_data in table_data:
+                            row = table.row()
+                            for c in r_data: row.cell(c)
+                    pdf.ln(5)
+                continue
+
+            if not line:
+                pdf.ln(2)
+                i += 1
+                continue
+            
+            # Header handling
+            if line.startswith('#'):
+                clean_header = clean_markdown_symbols(re.sub(r'^#+\s*', '', line))
+                if line.startswith('###'):
+                    pdf.set_font("Arial", 'B', 12)
+                    pdf.ln(3)
+                elif line.startswith('##'):
+                    pdf.set_font("Arial", 'B', 13)
+                    pdf.ln(4)
+                else: 
+                    pdf.set_font("Arial", 'B', 14)
+                    pdf.ln(5)
+                
+                pdf.set_x(10)
+                pdf.multi_cell(0, 8, clean_text(clean_header))
+                pdf.set_font("Arial", '', 11)
+            
+            # List handling (broader detection)
+            elif re.match(r'^[\-\*•]\s*', line):
+                # Extract text after any bullet-like symbol
+                text = re.sub(r'^[\-\*•]\s*', '', line)
+                text = clean_markdown_symbols(text)
+                pdf.set_x(15)
+                # Use a proper bullet character
+                pdf.multi_cell(0, 7, clean_text(f"\x95 {text}")) # \x95 is bullet in many latin-1 encodings
+                pdf.set_x(10)
+            
+            # Regular text
+            else:
+                text = clean_markdown_symbols(line)
+                pdf.set_x(10)
+                pdf.multi_cell(0, 7, clean_text(text))
+            i += 1
+        
+        pdf_bytes = pdf.output()
+        safe_topik = re.sub(r'[^\w\s-]', '', req.topik).strip().replace(" ", "_")
+        return StreamingResponse(
+            io.BytesIO(pdf_bytes),
+            media_type="application/pdf",
+            headers={
+                "Content-Disposition": f"attachment; filename=RPP_{safe_topik}.pdf",
+                "Access-Control-Expose-Headers": "Content-Disposition"
+            }
+        )
+    except Exception as e:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Gagal export PDF RPP: {str(e)}")
+@router.post("/export-word")
+async def export_rpp_word(req: ExportRPPRequest):
+    try:
+        # Robust input sanitization
+        topik = str(req.topik or "Tanpa Judul")
+        mapel = str(req.mapel or "Mata Pelajaran")
+        kelas = str(req.kelas or "Semua")
+        content_markdown = str(req.content_markdown or "")
+
+        if topik.lower() == "null": topik = "Tanpa Judul"
+        if mapel.lower() == "null": mapel = "Mata Pelajaran"
+        if kelas.lower() == "null": kelas = "Semua"
+        if content_markdown.lower() == "null": content_markdown = ""
+
+        print(f"DEBUG: Exporting Word RPP for {topik}...")
+        doc = Document()
+        
+        # Title Section (Styled as Modal)
+        h0 = doc.add_heading("MODUL AJAR (RPP)", 0)
+        h0.alignment = 1
+        for run in h0.runs: run.font.color.rgb = RGBColor(0, 0, 0)
+        
+        p_topik = doc.add_paragraph()
+        p_topik.alignment = 1
+        run_topik = p_topik.add_run(topik)
+        run_topik.bold = True
+        run_topik.font.size = Pt(18)
+        run_topik.font.color.rgb = RGBColor(0, 0, 0)
+        
+        p_meta = doc.add_paragraph()
+        p_meta.alignment = 1
+        run_mapel = p_meta.add_run(f" {mapel} ")
+        run_mapel.font.size = Pt(10)
+        run_mapel.italic = True
+        run_mapel.font.color.rgb = RGBColor(0, 0, 0)
+        
+        run_kelas = p_meta.add_run(f" | Kelas {kelas} ")
+        run_kelas.font.size = Pt(10)
+        run_kelas.italic = True
+        run_kelas.font.color.rgb = RGBColor(0, 0, 0)
+        
+        doc.add_paragraph("_" * 60).alignment = 1
+        
+        # Content Parsing with Table Support
+        lines = content_markdown.split('\n')
+        i = 0
+        while i < len(lines):
+            line = lines[i].strip()
+            
+            # Table detection (More robust regex check)
+            is_table_start = '|' in line and i + 1 < len(lines) and re.match(r'^\s*\|?[:\-\s|]+\|?[:\-\s|]*\s*$', lines[i+1])
+            if is_table_start:
+                header_line = line.strip().strip('|')
+                headers = [c.strip().replace('**', '') for c in header_line.split('|')]
+                
+                i += 2 # Skip header and separator
+                rows = []
+                while i < len(lines):
+                    row_line = lines[i].strip()
+                    if not '|' in row_line and not row_line.startswith('|'):
+                        break
+                    
+                    row_content = row_line.strip('|')
+                    row = [c.strip().replace('**', '') for c in row_content.split('|')]
+                    if row:
+                        while len(row) < len(headers): row.append("")
+                        rows.append(row[:len(headers)])
+                    i += 1
+                
+                if headers or rows:
+                    table = doc.add_table(rows=0, cols=len(headers))
+                    table.style = 'Table Grid'
+                    
+                    if headers:
+                        header_row = table.add_row().cells
+                        for idx, hs in enumerate(headers):
+                            p = header_row[idx].paragraphs[0]
+                            r = p.add_run(hs)
+                            r.bold = True
+                            r.font.color.rgb = RGBColor(0, 0, 0)
+                    
+                    for row_data in rows:
+                        cells = table.add_row().cells
+                        for idx, val in enumerate(row_data):
+                            p = cells[idx].paragraphs[0]
+                            r = p.add_run(val)
+                            r.font.color.rgb = RGBColor(0, 0, 0)
+                continue
+
+            if not line:
+                i += 1
+                continue
+            
+            # Header handling
+            if line.startswith('#'):
+                # Robustly remove any number of # at the start
+                clean_header = re.sub(r'^#+\s*', '', line)
+                level = 1
+                if line.startswith('###'): level = 3
+                elif line.startswith('##'): level = 2
+                
+                h = doc.add_heading(clean_header, level=level)
+                # Set heading color to black
+                for run in h.runs:
+                    run.font.color.rgb = RGBColor(0, 0, 0)
+            
+            # List handling
+            elif line.startswith('- ') or line.startswith('* '):
+                p = doc.add_paragraph(style='List Bullet')
+                text = re.sub(r'^[\-\*]\s*', '', line)
+                # Handle bold parts
+                parts = re.split(r'(\*\*.*?\*\*)', text)
+                for part in parts:
+                    if part.startswith('**') and part.endswith('**'):
+                        r = p.add_run(part[2:-2])
+                        r.bold = True
+                    else:
+                        r = p.add_run(part)
+                    r.font.color.rgb = RGBColor(0, 0, 0)
+            
+            # Regular text
+            else:
+                p = doc.add_paragraph()
+                # Handle bold parts
+                parts = re.split(r'(\*\*.*?\*\*)', line)
+                for part in parts:
+                    if part.startswith('**') and part.endswith('**'):
+                        r = p.add_run(part[2:-2])
+                        r.bold = True
+                    else:
+                        r = p.add_run(part)
+                    r.font.color.rgb = RGBColor(0, 0, 0)
+            i += 1
+        
+        file_stream = io.BytesIO()
+        doc.save(file_stream)
+        file_stream.seek(0)
+        
+        safe_topik = re.sub(r'[^\w\s-]', '', req.topik).strip().replace(" ", "_")
+        
+        return Response(
+            content=file_stream.getvalue(),
+            media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            headers={
+                "Content-Disposition": f"attachment; filename=RPP_{safe_topik}.docx",
+                "Access-Control-Expose-Headers": "Content-Disposition"
+            }
+        )
+    except Exception as e:
+        traceback.print_exc()
 
 @router.get("/history")
 async def get_rpp_history(
