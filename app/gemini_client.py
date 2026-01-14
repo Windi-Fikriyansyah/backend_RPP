@@ -25,7 +25,7 @@ class GeminiClient:
         if not self.client:
              return "Error: API Key Missing"
         
-        max_retries = 3
+        max_retries = 5
         for attempt in range(max_retries):
             try:
                 # Perbaikan: Gunakan self.client.aio untuk mendukung await
@@ -37,14 +37,19 @@ class GeminiClient:
                 return response.text
             except Exception as e:
                 error_str = str(e)
-                # Handle Quota (Rate Limit)
-                if "429" in error_str or "RESOURCE_EXHAUSTED" in error_str:
+                # Handle Quota (Rate Limit) OR Server Overload (503)
+                if ("429" in error_str or 
+                    "RESOURCE_EXHAUSTED" in error_str or 
+                    "503" in error_str or 
+                    "overloaded" in error_str or
+                    "UNAVAILABLE" in error_str):
+                    
                     if attempt < max_retries - 1:
                         wait_time = 5 * (attempt + 1)
-                        print(f"Quota exceeded. Retrying in {wait_time}s...")
+                        print(f"Gemini Busy/Overloaded (Attempt {attempt+1}/{max_retries}). Retrying in {wait_time}s... Error: {error_str[:100]}")
                         await asyncio.sleep(wait_time)
                         continue
                 return f"Error Generating RPP: {error_str}"
-        return "Error: Failed after retries"
+        return "Error: Failed after retries (Gemini System Busy)"
 
 gemini_client = GeminiClient()

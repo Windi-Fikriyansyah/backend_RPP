@@ -2,215 +2,316 @@ import httpx
 from io import BytesIO
 from pptx import Presentation
 from pptx.util import Inches, Pt
-from pptx.enum.text import PP_ALIGN
 from pptx.dml.color import RGBColor
-from pptx.enum.shapes import MSO_SHAPE
-import math
-import urllib.parse
+import copy
+import os
 
 class PPTService:
-    THEMES = {
-        "Ceria": {
-            "primary": "#FF9F43",
-            "secondary": "#FECA57",
-            "accent": "#FF6B6B",
-            "text": "#2D3436",
-            "bg": "#FFFFFF"
-        },
-        "Formal": {
-            "primary": "#2E86DE",
-            "secondary": "#54A0FF",
-            "accent": "#222F3E",
-            "text": "#2D3436",
-            "bg": "#FFFFFF"
-        },
-        "Alam": {
-            "primary": "#10AC84",
-            "secondary": "#1DD1A1",
-            "accent": "#006266",
-            "text": "#2D3436",
-            "bg": "#FFFFFF"
-        },
-        "Pastel": {
-            "primary": "#FF9FF3",
-            "secondary": "#FDCB6E",
-            "accent": "#A29BFE",
-            "text": "#2D3436",
-            "bg": "#F9F9F9"
-        }
-    }
+    TEMPLATE_DIR = "app/templates"
 
     @staticmethod
-    def hex_to_rgb(hex_code):
-        hex_code = hex_code.lstrip('#')
-        return RGBColor(*(int(hex_code[i:i+2], 16) for i in (0, 2, 4)))
+    def _replace_text_in_shape(shape, replacements):
+        if not shape.has_text_frame:
+            return
+            
+        for paragraph in shape.text_frame.paragraphs:
+            for run in paragraph.runs:
+                original_text = run.text
+                # Create a local copy to modify
+                new_text = original_text
+                for key, val in replacements.items():
+                    if key in new_text:
+                        new_text = new_text.replace(key, str(val))
+                
+                # Only update if changed to preserve formatting where possible
+                if new_text != original_text:
+                    run.text = new_text
 
     @staticmethod
-    def add_decorations(slide, theme_colors):
-        # Top-right accent circle
-        circle = slide.shapes.add_shape(MSO_SHAPE.OVAL, Inches(9), Inches(-0.5), Inches(1.5), Inches(1.5))
-        circle.fill.solid()
-        circle.fill.fore_color.rgb = theme_colors["secondary"]
-        circle.line.fill.background()
-
-        # Bottom-left accent line
-        line = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(-0.2), Inches(7.2), Inches(3), Inches(0.1))
-        line.fill.solid()
-        line.fill.fore_color.rgb = theme_colors["primary"]
-        line.line.fill.background()
-
-    @staticmethod
-    def auto_fit_text(text_frame, max_font_size=24, min_font_size=12):
-        # Simple auto-shrink logic
-        char_count = sum(len(p.text) for p in text_frame.paragraphs)
-        if char_count > 200:
-            size = min_font_size
-        elif char_count > 100:
-            size = max_font_size - 6
-        else:
-            size = max_font_size
+    def _duplicate_slide(prs, source_slide_index):
+        """
+        Duplicate a slide by copying the layout and all shapes.
+        This is a workaround since python-pptx doesn't support cloning directly.
+        """
+        source_slide = prs.slides[source_slide_index]
+        layout = source_slide.slide_layout
+        new_slide = prs.slides.add_slide(layout)
         
-        for p in text_frame.paragraphs:
-            p.font.size = Pt(size)
+        for shape in source_slide.shapes:
+            # We only copy TextBoxes and Pictures for now to keep it simple and fast
+            # Copying complex shapes is very hard in python-pptx without deep XML manipulation
+            
+            if shape.has_text_frame:
+                # Add new textbox with same position
+                new_shape = new_slide.shapes.add_textbox(
+                    shape.left, shape.top, shape.width, shape.height
+                )
+                
+                # Copy text/formatting
+                # Simple copy:
+                new_shape.text_frame.text = shape.text_frame.text
+                
+                # Try to copy style of first paragraph
+                if shape.text_frame.paragraphs:
+                    p_src = shape.text_frame.paragraphs[0]
+                    p_dst = new_shape.text_frame.paragraphs[0]
+                    if p_src.runs:
+                        r_src = p_src.runs[0]
+                        if p_dst.runs:
+                            r_dst = p_dst.runs[0]
+                            r_dst.font.size = r_src.font.size
+                            r_dst.font.bold = r_src.font.bold
+                            r_dst.font.color.rgb = r_src.font.color.rgb
+                            try:
+                                r_dst.font.name = r_src.font.name
+                            except: pass
+            
+            # Note: We skip images in the template for duplication to avoid bloating 
+            # unless they are background shapes (which are usually on the master).
+            # If the user wants a logo on every slide, it should be on the Master Slide.
 
+        return new_slide
+    
     @classmethod
     async def generate_ppt(cls, json_data: dict) -> BytesIO:
-        prs = Presentation()
-        prs.slide_width = Inches(10)
-        prs.slide_height = Inches(7.5)
+        theme_name = json_data.get("theme", "Ceria")
+        template_filename = f"{theme_name}.pptx"
+        template_path = os.path.join(cls.TEMPLATE_DIR, template_filename)
         
-        theme_name = json_data.get("theme", "Formal")
-        theme = cls.THEMES.get(theme_name, cls.THEMES["Formal"])
-        colors = {k: cls.hex_to_rgb(v) for k, v in theme.items()}
-
-        # 1. Title Slide
-        slide_layout = prs.slide_layouts[6] # Blank
-        slide = prs.slides.add_slide(slide_layout)
+        # Fallback to Ceria if specific theme not found
+        if not os.path.exists(template_path):
+            print(f"Template {theme_name} not found, using Ceria")
+            template_path = os.path.join(cls.TEMPLATE_DIR, "Ceria.pptx")
+            
+        print(f"DEBUG: Loading template from {template_path}")
+        prs = Presentation(template_path)
         
-        # Background color for title slide
-        background = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, 0, 0, prs.slide_width, prs.slide_height)
-        background.fill.solid()
-        background.fill.fore_color.rgb = colors["primary"]
-        background.line.fill.background()
-
-        # Title
-        title_box = slide.shapes.add_textbox(Inches(1), Inches(2.5), Inches(8), Inches(2))
-        tf = title_box.text_frame
-        p = tf.paragraphs[0]
-        p.text = json_data.get("judul_materi", "Materi Ajar").upper()
-        p.font.bold = True
-        p.font.size = Pt(44)
-        p.font.color.rgb = RGBColor(255, 255, 255)
-        p.alignment = PP_ALIGN.CENTER
-
-        # 2. Content Slides
-        for i, slide_info in enumerate(json_data.get("slides", [])):
-            layout_type = slide_info.get("layout_type", "split")
-            slide = prs.slides.add_slide(prs.slide_layouts[6]) # Blank
-            cls.add_decorations(slide, colors)
-
-            if layout_type == "highlight":
-                # Solid Primary BG
-                bg = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, 0, 0, prs.slide_width, prs.slide_height)
-                bg.fill.solid()
-                bg.fill.fore_color.rgb = colors["primary"]
-                bg.line.fill.background()
-
-                text_box = slide.shapes.add_textbox(Inches(1), Inches(2.5), Inches(8), Inches(3))
-                tf = text_box.text_frame
-                tf.word_wrap = True
-                p = tf.paragraphs[0]
-                p.text = slide_info.get("judul_slide", "")
-                p.font.bold = True
-                p.font.size = Pt(48)
-                p.font.color.rgb = RGBColor(255, 255, 255)
-                p.alignment = PP_ALIGN.CENTER
-
-            elif layout_type == "big_image":
-                keyword = slide_info.get("keyword_visual", "education")
-                encoded_keyword = urllib.parse.quote(keyword)
-                img_url = f"https://loremflickr.com/1280/960/{encoded_keyword}"
-                fallback_url = f"https://picsum.photos/1280/960"
-                
-                try:
-                    print(f"DEBUG: Fetching Big Image for keyword: {keyword}")
-                    async with httpx.AsyncClient() as client:
-                        # Try primary
-                        response = await client.get(img_url, timeout=15, follow_redirects=True)
-                        if response.status_code != 200:
-                            print(f"DEBUG: Primary image failed ({response.status_code}), trying fallback...")
-                            response = await client.get(fallback_url, timeout=15, follow_redirects=True)
+        # --- SLIDE 1: TITLE (Index 0) ---
+        if len(prs.slides) > 0:
+            title_slide = prs.slides[0]
+            shape_map_title = {}
+            cls._replace_text_in_shape_recursive(title_slide, {
+                "{{judul_materi}}": json_data.get("judul_materi", ""),
+                "{{theme}}": json_data.get("theme", "")
+            }, shape_map=shape_map_title)
+            
+            # Dynamic Font Sizing for Main Title (User Request)
+            try:
+                if "{{judul_materi}}" in shape_map_title:
+                    main_title_shape = shape_map_title["{{judul_materi}}"]
+                    if main_title_shape.has_text_frame:
+                        main_title_shape.text_frame.word_wrap = True
+                        raw_main_title = json_data.get("judul_materi", "")
+                        words_main = raw_main_title.split()
                         
-                        print(f"DEBUG: Big Image Response Status: {response.status_code}")
-                        if response.status_code == 200:
-                            img_bytes = BytesIO(response.content)
-                            slide.shapes.add_picture(img_bytes, 0, 0, width=prs.slide_width)
-                        else:
-                            print(f"DEBUG: Failed to fetch Big Image even with fallback. Status: {response.status_code}")
-                except Exception as img_err:
-                    print(f"DEBUG: Error fetching Big Image: {img_err}")
-
-                # Translucent overlay
-                overlay = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, 0, Inches(5), prs.slide_width, Inches(2.5))
-                overlay.fill.solid()
-                overlay.fill.fore_color.rgb = RGBColor(0, 0, 0)
-                # Note: python-pptx doesn't support alpha easily, but we can use a dark fill
+                        if len(words_main) > 6:
+                             # Shrink Main Title
+                             new_size_main = Pt(36) # Default is usually 44-54
+                             for p in main_title_shape.text_frame.paragraphs:
+                                for r in p.runs:
+                                    r.font.size = new_size_main
+                                    r.font.bold = True # Enforce Bold
+            except Exception as e:
+                print(f"DEBUG: Main Title Font adjustment failed: {e}")
+        
+        # --- CONTENT SLIDES (Index 1..N) ---
+        slides_data = json_data.get("slides", [])
+        
+        # Max slides we can fill is determined by the template (minus title slide)
+        available_slots = len(prs.slides) - 1
+        
+        if available_slots < 1:
+            # Fallback if template is broken/empty
+            print("Template has no content slides!")
+        else:
+            # Fill existing slides
+            # We strictly map Item 0 -> Slide 1, Item 1 -> Slide 2...
+            # We stop if we run out of items OR run out of slides.
+            
+            items_to_process = slides_data[:available_slots] # Truncate excess items
+            
+            for idx, slide_data in enumerate(items_to_process):
+                # Target slide index is idx + 1 (because 0 is title)
+                target_slide = prs.slides[idx + 1]
                 
-                text_box = slide.shapes.add_textbox(Inches(0.5), Inches(5.2), Inches(9), Inches(2))
-                tf = text_box.text_frame
-                p = tf.paragraphs[0]
-                p.text = slide_info.get("judul_slide", "")
-                p.font.bold = True
-                p.font.size = Pt(32)
-                p.font.color.rgb = RGBColor(255, 255, 255)
-
-            else: # split (default)
-                # Left: Text
-                title_box = slide.shapes.add_textbox(Inches(0.5), Inches(0.5), Inches(5), Inches(1))
-                t_tf = title_box.text_frame
-                t_p = t_tf.paragraphs[0]
-                t_p.text = slide_info.get("judul_slide", "Slide")
-                t_p.font.bold = True
-                t_p.font.size = Pt(32)
-                t_p.font.color.rgb = colors["primary"]
-
-                content_box = slide.shapes.add_textbox(Inches(0.5), Inches(1.5), Inches(4.5), Inches(5))
-                tf = content_box.text_frame
-                tf.word_wrap = True
+                shape_map = {}
+                slide_content = "\n".join([f"• {x}" for x in slide_data.get("konten", [])])
                 
-                for point in slide_info.get("konten", []):
-                    p = tf.add_paragraph()
-                    p.text = f"• {point}"
-                    p.font.color.rgb = colors["text"]
-                    p.space_after = Pt(12)
+                cls._replace_text_in_shape_recursive(target_slide, {
+                    "{{judul_slide}}": slide_data.get("judul_slide", ""),
+                    "{{konten}}": slide_content
+                }, shape_map=shape_map)
                 
-                cls.auto_fit_text(tf)
-
-                # Right: Image
-                keyword = slide_info.get("keyword_visual", "education")
-                encoded_keyword = urllib.parse.quote(keyword)
-                img_url = f"https://loremflickr.com/800/800/{encoded_keyword}"
-                fallback_url = f"https://picsum.photos/800/800"
+                # Dynamic Font Sizing for Title (User Request)
                 try:
-                    print(f"DEBUG: Fetching Split Image for keyword: {keyword}")
-                    async with httpx.AsyncClient() as client:
-                        response = await client.get(img_url, timeout=15, follow_redirects=True)
-                        if response.status_code != 200:
-                            print(f"DEBUG: Primary image failed ({response.status_code}), trying fallback...")
-                            response = await client.get(fallback_url, timeout=15, follow_redirects=True)
+                    if "{{judul_slide}}" in shape_map:
+                        title_shape = shape_map["{{judul_slide}}"]
+                        if title_shape.has_text_frame:
+                            title_shape.text_frame.word_wrap = True
+                            
+                            # Check source data directly for reliability
+                            raw_title = slide_data.get("judul_slide", "")
+                            words = raw_title.split()
+                            word_count = len(words)
+                            
+                            new_size = None
+                            if word_count > 12:
+                                new_size = Pt(20) # Very long title
+                            elif word_count > 4: # Changed from 5 to 4 per request
+                                new_size = Pt(24) # Medium-long title
+                                
+                            if new_size:
+                                for p in title_shape.text_frame.paragraphs:
+                                    for r in p.runs:
+                                        r.font.size = new_size
+                                        r.font.bold = True # Enforce Bold
+                                        
+                    # Enforce Regular Font for Content (User Request)
+                    if "{{konten}}" in shape_map:
+                        content_shape = shape_map["{{konten}}"]
+                        if content_shape.has_text_frame:
+                             for p in content_shape.text_frame.paragraphs:
+                                for r in p.runs:
+                                    r.font.bold = False # Enforce Regular
+                                    
+                except Exception as e:
+                    print(f"DEBUG: Font adjustment failed: {e}")
+                except Exception as e:
+                    print(f"DEBUG: Font adjustment failed: {e}")
 
-                        print(f"DEBUG: Split Image Response Status: {response.status_code}")
-                        if response.status_code == 200:
-                            img_bytes = BytesIO(response.content)
-                            # Add picture and maintain aspect ratio roughly
-                            slide.shapes.add_picture(img_bytes, Inches(5.5), Inches(1.5), width=Inches(4))
-                        else:
-                            print(f"DEBUG: Failed to fetch Split Image even with fallback. Status: {response.status_code}")
-                except Exception as img_err:
-                    print(f"DEBUG: Error fetching Split Image: {img_err}")
+            # --- DELETE UNUSED SLIDES ---
+            # If we used X items, we used indices 1 to X.
+            # Unused indices are X+1 to End.
+            # We must delete them BACKWARDS to avoid index shifting.
+            
+            used_count = len(items_to_process)
+            total_slides = len(prs.slides) # This includes title (Index 0)
+            
+            # Last used index was `used_count` (0 is title, 1..used_count are content).
+            # So first unused index is `used_count + 1`.
+            
+            first_unused_index = used_count + 1
+            
+            if first_unused_index < total_slides:
+                # Iterate backwards from last index down to first_unused_index
+                print(f"DEBUG: Deleting unused slides from {first_unused_index} to {total_slides-1}")
+                
+                # Get XML Key for deletion
+                xml_slides = prs.slides._sldIdLst
+                
+                slides_to_delete = []
+                for i in range(total_slides - 1, first_unused_index - 1, -1):
+                    slides_to_delete.append(prs.slides[i].slide_id)
 
-        # Save to memory
+                # Delete logic
+                for slide_id in slides_to_delete:
+                    # Find and remove
+                    for i, sldId in enumerate(xml_slides):
+                        if sldId.id == slide_id:
+                            xml_slides.remove(sldId)
+                            break
+
         ppt_output = BytesIO()
         prs.save(ppt_output)
         ppt_output.seek(0)
         return ppt_output
+
+    @staticmethod
+    def _replace_text_in_shape_recursive(slide_or_group, replacements, shape_map=None):
+        # Handle both Slide and Group objects which have .shapes to iterate
+        shapes = slide_or_group.shapes
+        from pptx.enum.shapes import MSO_SHAPE_TYPE
+
+        for shape in shapes:
+            # 1. Check if it's a Group -> Recurse
+            if shape.shape_type == MSO_SHAPE_TYPE.GROUP:
+                PPTService._replace_text_in_shape_recursive(shape, replacements, shape_map)
+                continue
+            
+            # 2. Check if it has text frame
+            if shape.has_text_frame:
+                # Iterate paragraphs
+                for p in shape.text_frame.paragraphs:
+                    full_text = "".join(r.text for r in p.runs)
+                    if not full_text.strip():
+                        continue
+
+                    original = full_text
+                    modified = False
+                    
+                    for k, v in replacements.items():
+                        if k in full_text:
+                            full_text = full_text.replace(k, str(v))
+                            modified = True
+                            # Track matched shape
+                            if shape_map is not None:
+                                shape_map[k] = shape
+                            
+                    if modified:
+                        # Capture style from the FIRST run
+                        first_run_font_size = None
+                        first_run_font_color = None
+                        first_run_bold = None
+                        
+                        if p.runs:
+                            r0 = p.runs[0]
+                            first_run_font_size = r0.font.size
+                            first_run_bold = r0.font.bold
+                            try:
+                                first_run_color = r0.font.color.rgb
+                            except:
+                                first_run_color = None
+
+                        # CRITICAL FIX: Clear ALL runs in the paragraph to prevent overlapping/appending
+                        p.clear() 
+                        
+                        # Add new run with the FULL replaced text
+                        new_run = p.add_run()
+                        new_run.text = full_text
+                        
+                        # Restore style
+                        if first_run_font_size:
+                            new_run.font.size = first_run_font_size
+                        if first_run_font_color:
+                            new_run.font.color.rgb = first_run_color
+                        if first_run_bold is not None:
+                            new_run.font.bold = first_run_bold
+
+    @staticmethod
+    def _duplicate_slide_native(prs, source_slide):
+        """
+        Duplicate a slide by creating a new slide with the same layout
+        and then copying all shape elements via XML deep copy.
+        CRITICAL: Also copies image relationships (blips).
+        """
+        layout = source_slide.slide_layout
+        new_slide = prs.slides.add_slide(layout)
+        
+        # CLEAR DEFAULT PLACEHOLDERS
+        # When we add a slide with a layout, it might come with empty placeholders.
+        # Since we are about to copy all shapes from the source (which includes the filled placeholders),
+        # we should remove the default empty ones to avoid "Text Overlap" (Double Textboxes).
+        for shp in list(new_slide.shapes):
+            sp = shp.element
+            sp.getparent().remove(sp)
+
+        # Copy every shape from source to destination via XML
+        for shape in source_slide.shapes:
+            new_element = copy.deepcopy(shape.element)
+            new_slide.shapes._spTree.insert_element_before(new_element, 'p:extLst')
+            
+        # FIX MISSING IMAGES (Relatioships)
+        source_rels = source_slide.part.rels
+        dest_part = new_slide.part
+        
+        blip_list = new_slide.shapes._spTree.xpath('.//a:blip')
+        for blip in blip_list:
+            rId = blip.get('{http://schemas.openxmlformats.org/officeDocument/2006/relationships}embed')
+            if rId and rId in source_rels:
+                rel = source_rels[rId]
+                if "image" in rel.reltype:
+                    new_rId = dest_part.relate_to(rel.target_part, rel.reltype)
+                    blip.set('{http://schemas.openxmlformats.org/officeDocument/2006/relationships}embed', new_rId)
+
+        return new_slide
+

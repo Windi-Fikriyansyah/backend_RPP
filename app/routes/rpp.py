@@ -165,6 +165,7 @@ class GeneratePPTRequest(BaseModel):
     rpp_content: str
     mapel: str
     topik: str
+    template: str = "auto"
 
 class GenerateQuizRequest(BaseModel):
     rpp_content: str
@@ -207,16 +208,26 @@ async def generate_ppt_route(
         raise HTTPException(status_code=403, detail="Fitur Buat PPT hanya tersedia untuk pelanggan Pro atau Sekolah.")
 
     # 2. Build Prompt for JSON Structure
-    prompt = f"""
-Berdasarkan Modul Ajar di bawah ini, buatkan struktur presentasi untuk guru dalam format JSON yang ESTETIK.
-Fokus pada materi inti. Buatlah menjadi 7-8 slide.
-
+    # Determine Theme Instruction
+    theme_instruction = """
 PILIH TEMA:
-Pilih salah satu tema yang paling cocok:
+Pilih salah satu tema yang paling cocok berdasarkan mapel dan topik:
 - "Ceria": Cocok untuk SD, warna oranye/kuning.
 - "Formal": Cocok untuk SMP/SMA/Umum, warna biru.
 - "Alam": Cocok untuk IPA/Geografi, warna hijau.
 - "Pastel": Cocok untuk materi bimbingan atau desain, warna pink/soft.
+"""
+    if req.template and req.template != "auto":
+        theme_instruction = f"""
+TEMA DIPILIH USER: "{req.template}"
+Gunakan gaya desain "{req.template}" untuk seluruh slide.
+"""
+
+    prompt = f"""
+Berdasarkan Modul Ajar di bawah ini, buatkan struktur presentasi untuk guru dalam format JSON yang ESTETIK.
+Fokus pada materi inti. Buatlah menjadi 7-8 slide.
+
+{theme_instruction}
 
 STRUKTUR JSON:
 {{

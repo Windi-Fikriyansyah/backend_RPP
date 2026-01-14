@@ -34,7 +34,7 @@ class CreateTransactionRequest(BaseModel):
 
 # Defines available plans (Hardcoded for single source of truth)
 AVAILABLE_PLANS = {
-    "monthly": Plan(id="monthly", name="Paket Pro", price=49000, duration_days=30, features=["Unlimited RPP", "Export Word"]),
+    "monthly": Plan(id="monthly", name="Paket Pro", price=39000, duration_days=30, features=["Unlimited RPP", "Export Word"]),
     "yearly": Plan(id="yearly", name="Paket Tahunan", price=450000, duration_days=365, features=["Hemat 25%", "Priority Support"]),
     "school": Plan(id="school", name="Paket Sekolah", price=299000, duration_days=30, features=["Up to 50 Guru", "Admin Dashboard"])
 }
