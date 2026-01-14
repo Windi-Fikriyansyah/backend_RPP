@@ -38,7 +38,7 @@ async def global_exception_handler(request: Request, exc: Exception):
     return response
 
 # 1. Proxy & Session Middleware
-from fastapi.middleware.proxy_headers import ProxyHeadersMiddleware
+from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")
 
 # Tentukan domain cookie jika di production agar bisa dishare antar subdomain
