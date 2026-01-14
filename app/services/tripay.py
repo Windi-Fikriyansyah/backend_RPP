@@ -54,8 +54,8 @@ class TripayService:
             "customer_name": customer_name,
             "customer_email": customer_email,
             "order_items": order_items,
-            "callback_url": "https://f25c1289ceb3.ngrok-free.app/api/payment/callback", # TODO: Change for prod
-            "return_url": "http://localhost:3000/dashboard",
+            "callback_url": f"{Config.BACKEND_URL}/api/payment/callback",
+            "return_url": f"{Config.FRONTEND_URL}/dashboard",
             "expired_time": int(datetime.utcnow().timestamp()) + (24 * 60 * 60), # Unix Timestamp
             "signature": signature
         }

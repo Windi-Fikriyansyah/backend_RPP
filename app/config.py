@@ -15,3 +15,4 @@ class Config:
     TRIPAY_MODE = os.getenv("TRIPAY_MODE", "SANDBOX") # SANDBOX or PRODUCTION
     
     FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
+    BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:8000")

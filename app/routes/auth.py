@@ -21,7 +21,7 @@ google_sso = GoogleSSO(
     client_id=GOOGLE_CLIENT_ID,
     client_secret=GOOGLE_CLIENT_SECRET,
     redirect_uri=GOOGLE_REDIRECT_URI,
-    allow_insecure_http=True # Dev only
+    allow_insecure_http=os.getenv("ENV") != "PRODUCTION" # Disable insecure HTTP in production
 )
 
 @router.post("/register", response_model=UserResponse)
@@ -100,7 +100,8 @@ async def google_callback(request: Request, db: AsyncSession = Depends(get_db)):
     # Karena API dan Frontend beda port di dev, kita redirect absolutely.
     # Jika perlu kirim data, biasanya set cookie sudah cukup, frontend cek /me
     from starlette.responses import RedirectResponse
-    frontend_url = "https://rppgenius.sekolahliterasi.com" # URL Next.js
+    from app.config import Config
+    frontend_url = Config.FRONTEND_URL # URL Next.js
     return RedirectResponse(url=frontend_url)
 
 @router.get("/me", response_model=UserResponse)
