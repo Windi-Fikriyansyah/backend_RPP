@@ -37,14 +37,20 @@ async def global_exception_handler(request: Request, exc: Exception):
         response.headers["Access-Control-Allow-Credentials"] = "true"
     return response
 
-# 1. Session Middleware (Cookies) - Must be added BEFORE CORS if needed, or handled carefully
-# IMPORTANT: secret_key MUST be same in .env for persistence
+# 1. Proxy & Session Middleware
+from fastapi.middleware.proxy_headers import ProxyHeadersMiddleware
+app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")
+
+# Tentukan domain cookie jika di production agar bisa dishare antar subdomain
+session_domain = ".sekolahliterasi.com" if os.getenv("ENV") == "PRODUCTION" else None
+
 app.add_middleware(
     SessionMiddleware, 
     secret_key=Config.SECRET_KEY, 
     max_age=3600*24, 
-    https_only=os.getenv("ENV") == "PRODUCTION",  # Set True in production
-    same_site="lax"    # Standard for same-site (localhost ports)
+    https_only=os.getenv("ENV") == "PRODUCTION",
+    same_site="lax",
+    domain=session_domain
 )
 
 # 2. CORS
