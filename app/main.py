@@ -32,7 +32,7 @@ async def global_exception_handler(request: Request, exc: Exception):
     )
     # Re-add CORS headers manually for the error response
     origin = request.headers.get("origin")
-    if origin == Config.FRONTEND_URL or origin in ["http://localhost:3000", "http://127.0.0.1:3000"]:
+    if origin == Config.FRONTEND_URL or origin in ["http://localhost:3000", "http://127.0.0.1:3000",'https://rppgenius.sekolahliterasi.com']:
         response.headers["Access-Control-Allow-Origin"] = origin
         response.headers["Access-Control-Allow-Credentials"] = "true"
     return response
