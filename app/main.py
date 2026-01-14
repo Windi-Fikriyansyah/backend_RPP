@@ -31,7 +31,7 @@ async def global_exception_handler(request: Request, exc: Exception):
     )
     # Re-add CORS headers manually for the error response
     origin = request.headers.get("origin")
-    if origin in ["http://localhost:3000", "http://127.0.0.1:3000"]:
+    if origin == Config.FRONTEND_URL or origin in ["http://localhost:3000", "http://127.0.0.1:3000"]:
         response.headers["Access-Control-Allow-Origin"] = origin
         response.headers["Access-Control-Allow-Credentials"] = "true"
     return response
@@ -42,12 +42,13 @@ app.add_middleware(
     SessionMiddleware, 
     secret_key=Config.SECRET_KEY, 
     max_age=3600*24, 
-    https_only=False,  # Allow HTTP for localhost
+    https_only=os.getenv("ENV") == "PRODUCTION",  # Set True in production
     same_site="lax"    # Standard for same-site (localhost ports)
 )
 
 # 2. CORS
 origins = [
+    Config.FRONTEND_URL,
     "http://localhost:3000",
     "http://127.0.0.1:3000",
 ]

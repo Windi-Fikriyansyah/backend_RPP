@@ -13,3 +13,5 @@ class Config:
     TRIPAY_PRIVATE_KEY = os.getenv("TRIPAY_PRIVATE_KEY", "...") # Private Key for Signature
     TRIPAY_MERCHANT_CODE = os.getenv("TRIPAY_MERCHANT_CODE", "T12345")
     TRIPAY_MODE = os.getenv("TRIPAY_MODE", "SANDBOX") # SANDBOX or PRODUCTION
+    
+    FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
