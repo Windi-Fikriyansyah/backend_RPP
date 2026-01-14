@@ -12,10 +12,13 @@ from app.security import get_password_hash, verify_password
 router = APIRouter()
 
 # Setup Google SSO
+from app.config import Config
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
 GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
 # PENTING: redirect_uri harus sama dengan di google console
-GOOGLE_REDIRECT_URI = os.getenv("GOOGLE_REDIRECT_URI", "http://localhost:8000/auth/google/callback")
+# Gunakan BACKEND_URL dari config jika GOOGLE_REDIRECT_URI tidak diset
+GOOGLE_REDIRECT_URI = os.getenv("GOOGLE_REDIRECT_URI", f"{Config.BACKEND_URL}/auth/google/callback")
+print(f"DEBUG: Google Redirect URI is set to: {GOOGLE_REDIRECT_URI}")
 
 google_sso = GoogleSSO(
     client_id=GOOGLE_CLIENT_ID,
