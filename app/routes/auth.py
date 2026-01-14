@@ -15,12 +15,17 @@ router = APIRouter()
 from app.config import Config
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
 GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
-# PENTING: redirect_uri harus sama dengan di google console
-# Gunakan BACKEND_URL dari config jika GOOGLE_REDIRECT_URI tidak diset
-GOOGLE_REDIRECT_URI = os.getenv("GOOGLE_REDIRECT_URI", f"{Config.BACKEND_URL}/auth/google/callback")
-print(f"DEBUG: Config.FRONTEND_URL = {Config.FRONTEND_URL}")
-print(f"DEBUG: Config.BACKEND_URL = {Config.BACKEND_URL}")
-print(f"DEBUG: GOOGLE_REDIRECT_URI = {GOOGLE_REDIRECT_URI}")
+# DEBUG: Lihat mentah dari os.getenv
+raw_redirect = os.getenv("GOOGLE_REDIRECT_URI")
+raw_backend = os.getenv("BACKEND_URL")
+
+GOOGLE_REDIRECT_URI = raw_redirect if raw_redirect else f"{Config.BACKEND_URL}/auth/google/callback"
+
+print(f"--- DEBUG ENV START ---")
+print(f"RAW OS GOOGLE_REDIRECT_URI: {raw_redirect}")
+print(f"RAW OS BACKEND_URL: {raw_backend}")
+print(f"FINAL GOOGLE_REDIRECT_URI: {GOOGLE_REDIRECT_URI}")
+print(f"--- DEBUG ENV END ---")
 
 google_sso = GoogleSSO(
     client_id=GOOGLE_CLIENT_ID,
