@@ -100,7 +100,7 @@ async def google_callback(request: Request, db: AsyncSession = Depends(get_db)):
     # Karena API dan Frontend beda port di dev, kita redirect absolutely.
     # Jika perlu kirim data, biasanya set cookie sudah cukup, frontend cek /me
     from starlette.responses import RedirectResponse
-    frontend_url = "http://localhost:3000" # URL Next.js
+    frontend_url = "https://rppgenius.sekolahliterasi.com" # URL Next.js
     return RedirectResponse(url=frontend_url)
 
 @router.get("/me", response_model=UserResponse)
