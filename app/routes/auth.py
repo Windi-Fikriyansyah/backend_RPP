@@ -18,7 +18,9 @@ GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
 # PENTING: redirect_uri harus sama dengan di google console
 # Gunakan BACKEND_URL dari config jika GOOGLE_REDIRECT_URI tidak diset
 GOOGLE_REDIRECT_URI = os.getenv("GOOGLE_REDIRECT_URI", f"{Config.BACKEND_URL}/auth/google/callback")
-print(f"DEBUG: Google Redirect URI is set to: {GOOGLE_REDIRECT_URI}")
+print(f"DEBUG: Config.FRONTEND_URL = {Config.FRONTEND_URL}")
+print(f"DEBUG: Config.BACKEND_URL = {Config.BACKEND_URL}")
+print(f"DEBUG: GOOGLE_REDIRECT_URI = {GOOGLE_REDIRECT_URI}")
 
 google_sso = GoogleSSO(
     client_id=GOOGLE_CLIENT_ID,
