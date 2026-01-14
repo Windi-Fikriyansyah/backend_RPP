@@ -32,7 +32,7 @@ async def global_exception_handler(request: Request, exc: Exception):
     )
     # Re-add CORS headers manually for the error response
     origin = request.headers.get("origin")
-    if origin == Config.FRONTEND_URL or origin in ["http://localhost:3000", "http://127.0.0.1:3000",'https://rppgenius.sekolahliterasi.com']:
+    if origin in origins:
         response.headers["Access-Control-Allow-Origin"] = origin
         response.headers["Access-Control-Allow-Credentials"] = "true"
     return response
@@ -49,13 +49,14 @@ app.add_middleware(
     secret_key=Config.SECRET_KEY, 
     max_age=3600*24, 
     https_only=os.getenv("ENV") == "PRODUCTION",
-    same_site="lax",
+    same_site="lax",  # Penting untuk cross-subdomain
     domain=session_domain
 )
 
 # 2. CORS
 origins = [
     Config.FRONTEND_URL,
+    "https://rppgenius.sekolahliterasi.com",
     "http://localhost:3000",
     "http://127.0.0.1:3000",
 ]
