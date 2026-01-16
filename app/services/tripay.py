@@ -55,7 +55,7 @@ class TripayService:
             "customer_email": customer_email,
             "order_items": order_items,
             "callback_url": f"{Config.BACKEND_URL}/api/payment/callback",
-            "return_url": f"{Config.FRONTEND_URL}/dashboard",
+            "return_url": f"{Config.FRONTEND_URL}/buat-rpp",
             "expired_time": int(datetime.utcnow().timestamp()) + (24 * 60 * 60), # Unix Timestamp
             "signature": signature
         }
