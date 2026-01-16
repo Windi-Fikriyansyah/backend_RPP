@@ -16,9 +16,24 @@ from app.routes.auth import get_current_user
 from app.services.tripay import TripayService
 from app.utils.time_utils import get_jakarta_time
 
+from app.schemas.payment_schema import TransactionResponse
+
 router = APIRouter()
 tripay_service = TripayService()
 logger = logging.getLogger(__name__)
+
+@router.get("/history", response_model=List[TransactionResponse])
+async def get_transaction_history(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    result = await db.execute(
+        select(Transaction)
+        .where(Transaction.user_id == current_user.id)
+        .order_by(Transaction.created_at.desc())
+    )
+    transactions = result.scalars().all()
+    return transactions
 
 # --- Pydantic Models ---
 class Plan(BaseModel):
