@@ -21,3 +21,6 @@ Thumbs.db
 ~$*.docx
 ~$*.xlsx
 
+*.pyc
+*.pyo
+*.pyd
