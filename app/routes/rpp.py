@@ -755,11 +755,110 @@ async def get_rpp_history(
     user_id: int = Depends(get_current_user_id),
     db: AsyncSession = Depends(get_db)
 ):
-    from app.models.rpp_data import SavedRPP
+    from app.models.rpp_data import SavedRPP, SavedQuiz
+    
+    # 1. Fetch RPPs
     stmt = select(SavedRPP).where(SavedRPP.user_id == user_id).order_by(SavedRPP.created_at.desc())
     result = await db.execute(stmt)
     history = result.scalars().all()
-    return history
+    
+    # 2. Check for Quizzes for each RPP (naive approach, could be optimized with join)
+    # We want to return { ...rpp, quiz_id: id | None }
+    
+    # Let's fetch all quizzes for this user to map them
+    stmt_quiz = select(SavedQuiz).where(SavedQuiz.user_id == user_id)
+    res_quiz = await db.execute(stmt_quiz)
+    quizzes = res_quiz.scalars().all()
+    
+    # Create a map key: (mapel, topik) -> quiz_id
+    # Note: If multiple quizzes exist for same topic, pick latest (logic depends on usage)
+    quiz_map = {}
+    for q in quizzes:
+        key = (q.mapel, q.topik)
+        quiz_map[key] = q.id
+        
+    # Append quiz_id to response
+    # We can't easily modify the ORM object directly if it's not a dict or Pydantic model with extra fields allowed.
+    # So we'll return a list of dicts.
+    
+    response_data = []
+    for item in history:
+        # Convert to dict
+        item_dict = {c.name: getattr(item, c.name) for c in item.__table__.columns}
+        
+        # Find match
+        q_id = quiz_map.get((item.mapel, item.topik))
+        item_dict['quiz_id'] = q_id
+        
+        response_data.append(item_dict)
+        
+    return response_data
+
+@router.get("/quiz/{quiz_id}/download-word")
+async def download_quiz_word_by_id(
+    quiz_id: int,
+    user_id: int = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db)
+):
+    from app.models.rpp_data import SavedQuiz
+    
+    stmt = select(SavedQuiz).where(SavedQuiz.id == quiz_id, SavedQuiz.user_id == user_id)
+    result = await db.execute(stmt)
+    quiz = result.scalar_one_or_none()
+    
+    if not quiz:
+        raise HTTPException(status_code=404, detail="Quiz not found")
+        
+    # Reuse export logic
+    # We can reuse the function logic or call it if it was a service. 
+    # Since it's inside a route handler, let's duplicate the logic briefly or use a shared function. 
+    # For speed and safety in this context, I'll copy the Word generation logic here but using the stored data.
+    
+    try:
+        req_data = quiz.quiz_data
+        mapel = quiz.mapel
+        topik = quiz.topik
+        
+        doc = Document()
+        
+        # Title
+        title = doc.add_heading(f"Latihan Soal: {topik}", 0)
+        subtitle = doc.add_paragraph(f"Mata Pelajaran: {mapel}")
+        subtitle.alignment = 1 # Center
+        
+        questions = req_data.get("questions", [])
+        for q in questions:
+            p = doc.add_paragraph()
+            p.add_run(f"{q.get('no', '')}. {q.get('pertanyaan', '')}").bold = True
+            
+            options = q.get("options", {})
+            for key, val in options.items():
+                doc.add_paragraph(f"   {key}. {val}")
+        
+        # Kunci Jawaban at the end
+        doc.add_page_break()
+        doc.add_heading("Kunci Jawaban & Penjelasan", level=1)
+        for q in questions:
+            p = doc.add_paragraph()
+            p.add_run(f"No {q.get('no', '')}: ").bold = True
+            p.add_run(f"{q.get('kunci_jawaban', '')}")
+            
+            expl = doc.add_paragraph()
+            expl.add_run("Penjelasan: ").italic = True
+            expl.add_run(f"{q.get('penjelasan', '')}")
+            
+        file_stream = io.BytesIO()
+        doc.save(file_stream)
+        file_stream.seek(0)
+        
+        return Response(
+            content=file_stream.getvalue(),
+            media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            headers={"Content-Disposition": f"attachment; filename=Quiz_{topik}.docx"}
+        )
+    except Exception as e:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Gagal generate Word from Quiz ID: {str(e)}")
 
 @router.delete("/history/{rpp_id}")
 async def delete_rpp(
