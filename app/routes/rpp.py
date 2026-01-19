@@ -69,24 +69,37 @@ async def generate_rpp(
     
     plan_type = subscription.plan_type if subscription else "free"
     
-    # b. If Free, check usage
-    if plan_type == "free":
-        # Count RPP Generations in the current month
-        today = date.today()
-        first_day = today.replace(day=1)
-        
-        count_stmt = select(func.count(GenerationLog.id)).where(
-            GenerationLog.user_id == user_id,
-            GenerationLog.created_at >= first_day
+    # b. Check Usage based on Plan
+    # Limits
+    LIMITS = {
+        "free": 2,
+        "standard": 10,
+        "pro": 25,
+        "premium": 60,
+        # Legacy/Other
+        "monthly": 25, 
+        "yearly": 300,
+        "school": 1000
+    }
+    
+    limit = LIMITS.get(plan_type, 2) # Default to free limit
+
+    # Count RPP Generations in the current month
+    today = date.today()
+    first_day = today.replace(day=1)
+    
+    count_stmt = select(func.count(GenerationLog.id)).where(
+        GenerationLog.user_id == user_id,
+        GenerationLog.created_at >= first_day
+    )
+    count_res = await db.execute(count_stmt)
+    usage_count = count_res.scalar() or 0
+    
+    if usage_count >= limit:
+        raise HTTPException(
+            status_code=403, 
+            detail=f"Kuota RPP Anda sudah habis ({usage_count}/{limit}) bulan ini. Upgrade paket untuk kuota lebih banyak."
         )
-        count_res = await db.execute(count_stmt)
-        usage_count = count_res.scalar() or 0
-        
-        if usage_count >= 3:
-            raise HTTPException(
-                status_code=403, 
-                detail="Kuota generate gratis Anda telah habis (3/3) bulan ini. Silakan upgrade ke paket Pro atau Sekolah untuk akses Unlimited setiap bulan."
-            )
 
     # Proceed with generation...
     # Debug Session
@@ -204,8 +217,8 @@ async def generate_ppt_route(
     )
     sub = sub_res.scalars().first()
     
-    if not sub or sub.plan_type not in ["pro", "school", "monthly", "yearly"]:
-        raise HTTPException(status_code=403, detail="Fitur Buat PPT hanya tersedia untuk pelanggan Pro atau Sekolah.")
+    if not sub or sub.plan_type not in ["pro", "premium", "school", "yearly"]:
+        raise HTTPException(status_code=403, detail="Fitur Buat PPT hanya tersedia untuk pelanggan Pro, Premium, atau Sekolah.")
 
     # 2. Build Prompt for JSON Structure
     # Determine Theme Instruction
@@ -311,8 +324,34 @@ async def generate_quiz(
     db: AsyncSession = Depends(get_db)
 ):
     from app.models.rpp_data import SavedQuiz
+    from app.models.payment import Subscription
     
-    # 1. Build Prompt
+    # 0. Check Subscription
+    sub_res = await db.execute(
+        select(Subscription).where(
+            Subscription.user_id == user_id,
+            Subscription.is_active == True,
+            Subscription.end_date > get_jakarta_time()
+        )
+    )
+    sub = sub_res.scalars().first()
+    if not sub or sub.plan_type == "free":
+        raise HTTPException(status_code=403, detail="Fitur Buat Soal hanya tersedia untuk paket berbayar.")
+
+    # 1. Validate Feature Limits
+    if req.jumlah_soal > 20:
+        raise HTTPException(status_code=400, detail="Maksimal soal yang dapat dibuat adalah 20 soal.")
+    
+    # Determine Prompt Instruction based on Plan
+    explanation_instruction = ""
+    if sub.plan_type in ["standard", "standar"]:
+        # Standard: Kunci Jawaban (Tanpa Pembahasan)
+        explanation_instruction = "DILARANG KERAS memberikan penjelasan atau pembahasan. Biarkan field 'penjelasan' berisi STRING KOSONG (\"\"). Jangan tulis apapun di sana."
+    else:
+        # Pro/Premium: Kunci + Pembahasan Lengkap
+        explanation_instruction = "Berikan kunci jawaban beserta penjelasan lengkap dan mendalam mengapa jawaban itu benar pada field 'penjelasan'."
+
+    # 2. Build Prompt
     prompt = f"""
 Berdasarkan Modul Ajar berikut:
 {req.rpp_content}
@@ -322,7 +361,7 @@ Buatkan {req.jumlah_soal} soal pilihan ganda dengan tingkat kesulitan {req.tingk
 Aturan:
 1. Gunakan bahasa Indonesia yang baku dan sesuai umur siswa di Fase tersebut.
 2. Berikan 4 pilihan jawaban (A, B, C, D).
-3. Berikan kunci jawaban beserta penjelasan singkat mengapa jawaban itu benar.
+3. {explanation_instruction}
 4. Output harus dalam format JSON murni.
 
 Struktur JSON:
@@ -381,31 +420,93 @@ Struktur JSON:
         raise HTTPException(status_code=500, detail=f"Gagal generate soal: {str(e)}")
 
 @router.post("/export-quiz-pdf")
-async def export_quiz_pdf(req: ExportQuizRequest):
+async def export_quiz_pdf(
+    req: ExportQuizRequest,
+    user_id: int = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db)
+):
+    # Gate: Paid Only
+    from app.models.payment import Subscription
+    sub_res = await db.execute(select(Subscription).where(
+        Subscription.user_id == user_id, Subscription.is_active == True, Subscription.end_date > get_jakarta_time()
+    ))
+    sub = sub_res.scalars().first()
+    if not sub or sub.plan_type == "free":
+        raise HTTPException(status_code=403, detail="Download Soal Format PDF hanya tersedia di paket berbayar.")
+
     try:
         pdf = FPDF()
         pdf.add_page()
         
-        # Header
-        pdf.set_font("Arial", 'B', 16)
-        pdf.cell(0, 10, clean_text(f"Latihan Soal: {req.topik}"), ln=True, align='C')
-        pdf.set_font("Arial", '', 12)
-        pdf.cell(0, 10, clean_text(f"Mata Pelajaran: {req.mapel}"), ln=True, align='C')
-        pdf.ln(5)
+        # --- HEADER ---
+        pdf.set_y(15)
+        pdf.set_text_color(0, 0, 0)
+        pdf.set_font("Arial", 'B', 11)
+        pdf.cell(190, 10, "LATIHAN SOAL & EVALUASI", ln=True, align='C')
         
-        # Questions
+        pdf.set_font("Arial", 'B', 18)
+        pdf.multi_cell(190, 12, clean_text(req.topik), align='C')
+        
+        pdf.set_font("Arial", 'I', 10)
+        pdf.cell(190, 8, clean_text(f"Mata Pelajaran: {req.mapel}"), ln=True, align='C')
+        
+        # Separator Line
+        pdf.ln(2)
+        pdf.set_draw_color(200, 200, 200)
+        pdf.line(20, pdf.get_y(), 190, pdf.get_y())
+        pdf.ln(10)
+        
+        # --- QUESTIONS ---
         questions = req.quiz_data.get("questions", [])
         for q in questions:
-            pdf.set_font("Arial", 'B', 12)
-            # Question text
-            txt = clean_text(f"{q.get('no', '')}. {q.get('pertanyaan', '')}")
-            pdf.multi_cell(0, 10, txt)
+            # Check for page break space
+            if pdf.get_y() > 250:
+                pdf.add_page()
+
+            pdf.set_x(10) # Ensure we are at the left margin
+            pdf.set_font("Arial", 'B', 11)
+            # Question Number and Text
+            no = q.get('no', '')
+            txt = clean_text(f"{no}. {q.get('pertanyaan', '')}")
+            # Use explicit width pdf.epw instead of 0 to avoid calculation errors
+            pdf.multi_cell(pdf.epw, 8, txt)
             
-            pdf.set_font("Arial", '', 11)
+            pdf.ln(2)
+            pdf.set_font("Arial", '', 10)
             options = q.get("options", {})
             for key, val in options.items():
-                pdf.cell(0, 8, clean_text(f"   {key}. {val}"), ln=True)
+                pdf.set_x(10) # Reset X before each option
+                # Option text
+                opt_txt = clean_text(f"   {key}. {val}")
+                pdf.multi_cell(pdf.epw, 7, opt_txt)
+            
             pdf.ln(5)
+
+        # --- ANSWER KEY PAGE ---
+        pdf.add_page()
+        pdf.set_font("Arial", 'B', 14)
+        pdf.cell(0, 10, "KUNCI JAWABAN & PENJELASAN", ln=True, align='C')
+        pdf.ln(5)
+        
+        pdf.set_font("Arial", '', 10)
+        for q in questions:
+            if pdf.get_y() > 260:
+                pdf.add_page()
+
+            pdf.set_x(10) # Start from margin
+            pdf.set_font("Arial", 'B', 10)
+            pdf.cell(0, 8, clean_text(f"Nomor {q.get('no', '')}: {q.get('kunci_jawaban', '')}"), ln=True)
+            
+            penjelasan = q.get('penjelasan', '').strip()
+            # Only show if not empty and not just a placeholder
+            if penjelasan and len(penjelasan) > 2:
+                pdf.set_x(10) # Ensure description also starts from margin
+                pdf.set_font("Arial", 'I', 9)
+                pdf.set_text_color(80, 80, 80)
+                pdf.multi_cell(pdf.epw, 6, clean_text(f"Penjelasan: {penjelasan}"))
+                pdf.set_text_color(0, 0, 0)
+            
+            pdf.ln(3)
 
         # Buffer
         pdf_bytes = pdf.output()
@@ -423,7 +524,22 @@ async def export_quiz_pdf(req: ExportQuizRequest):
         raise HTTPException(status_code=500, detail=f"Gagal export PDF Quiz: {str(e)}")
 
 @router.post("/export-quiz-word")
-async def export_quiz_word(req: ExportQuizRequest):
+async def export_quiz_word(
+    req: ExportQuizRequest,
+    user_id: int = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db)
+):
+    # Check if Premium
+    from app.models.payment import Subscription
+    sub_res = await db.execute(select(Subscription).where(
+        Subscription.user_id == user_id, Subscription.is_active == True, Subscription.end_date > get_jakarta_time()
+    ))
+    sub = sub_res.scalars().first()
+    
+    if not sub or sub.plan_type not in ["premium", "school"]:
+        # Allow legacy pro/monthly if needed, but strictly per request: only Premium has .docx for Question
+        raise HTTPException(status_code=403, detail="Download Soal Format Word (.docx) hanya tersedia di Paket Premium.")
+
     try:
         doc = Document()
         
@@ -600,7 +716,20 @@ async def export_rpp_pdf(req: ExportRPPRequest):
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Gagal export PDF RPP: {str(e)}")
 @router.post("/export-word")
-async def export_rpp_word(req: ExportRPPRequest):
+async def export_rpp_word(
+    req: ExportRPPRequest,
+    user_id: int = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db)
+):
+    # Gate: All Paid Plans
+    from app.models.payment import Subscription
+    sub_res = await db.execute(select(Subscription).where(
+        Subscription.user_id == user_id, Subscription.is_active == True, Subscription.end_date > get_jakarta_time()
+    ))
+    sub = sub_res.scalars().first()
+    if not sub or sub.plan_type == "free":
+        raise HTTPException(status_code=403, detail="Download Word RPP hanya tersedia untuk paket berbayar.")
+
     try:
         # Robust input sanitization
         topik = str(req.topik or "Tanpa Judul")
@@ -756,7 +885,19 @@ async def get_rpp_history(
     db: AsyncSession = Depends(get_db)
 ):
     from app.models.rpp_data import SavedRPP, SavedQuiz
+    from app.models.payment import Subscription
     
+    # Gate: Paid Only
+    sub_res = await db.execute(select(Subscription).where(
+        Subscription.user_id == user_id, Subscription.is_active == True, Subscription.end_date > get_jakarta_time()
+    ))
+    sub = sub_res.scalars().first()
+    if not sub or sub.plan_type == "free":
+        # Return empty list or error? 
+        # Requirement: "Simpan Riwayat Selamanya hanya ada di paket berbayar"
+        # Implies Free users don't see history.
+        return []
+        
     # 1. Fetch RPPs
     stmt = select(SavedRPP).where(SavedRPP.user_id == user_id).order_by(SavedRPP.created_at.desc())
     result = await db.execute(stmt)
@@ -801,6 +942,15 @@ async def download_quiz_word_by_id(
     db: AsyncSession = Depends(get_db)
 ):
     from app.models.rpp_data import SavedQuiz
+    from app.models.payment import Subscription
+    
+    # Gate Check: Premium Only for Soal .docx
+    sub_res = await db.execute(select(Subscription).where(
+        Subscription.user_id == user_id, Subscription.is_active == True, Subscription.end_date > get_jakarta_time()
+    ))
+    sub = sub_res.scalars().first()
+    if not sub or sub.plan_type not in ["premium", "school"]:
+        raise HTTPException(status_code=403, detail="Download Soal Format Word (.docx) hanya tersedia di Paket Premium.")
     
     stmt = select(SavedQuiz).where(SavedQuiz.id == quiz_id, SavedQuiz.user_id == user_id)
     result = await db.execute(stmt)
@@ -843,9 +993,11 @@ async def download_quiz_word_by_id(
             p.add_run(f"No {q.get('no', '')}: ").bold = True
             p.add_run(f"{q.get('kunci_jawaban', '')}")
             
-            expl = doc.add_paragraph()
-            expl.add_run("Penjelasan: ").italic = True
-            expl.add_run(f"{q.get('penjelasan', '')}")
+            penjelasan = q.get('penjelasan', '').strip()
+            if penjelasan and len(penjelasan) > 2:
+                expl = doc.add_paragraph()
+                expl.add_run("Penjelasan: ").italic = True
+                expl.add_run(f"{penjelasan}")
             
         file_stream = io.BytesIO()
         doc.save(file_stream)
@@ -855,6 +1007,117 @@ async def download_quiz_word_by_id(
             content=file_stream.getvalue(),
             media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
             headers={"Content-Disposition": f"attachment; filename=Quiz_{topik}.docx"}
+        )
+    except Exception as e:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Gagal generate Word from Quiz ID: {str(e)}")
+
+@router.get("/quiz/{quiz_id}/download-pdf")
+async def download_quiz_pdf_by_id(
+    quiz_id: int,
+    user_id: int = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db)
+):
+    from app.models.rpp_data import SavedQuiz
+    from app.models.payment import Subscription
+    
+    # Gate Check: Any Paid for Soal PDF
+    sub_res = await db.execute(select(Subscription).where(
+        Subscription.user_id == user_id, Subscription.is_active == True, Subscription.end_date > get_jakarta_time()
+    ))
+    sub = sub_res.scalars().first()
+    if not sub or sub.plan_type == "free":
+        raise HTTPException(status_code=403, detail="Download Soal Format PDF hanya tersedia di Paket Berbayar.")
+    
+    stmt = select(SavedQuiz).where(SavedQuiz.id == quiz_id, SavedQuiz.user_id == user_id)
+    result = await db.execute(stmt)
+    quiz = result.scalar_one_or_none()
+    
+    if not quiz:
+        raise HTTPException(status_code=404, detail="Quiz not found")
+        
+    try:
+        quiz_data = quiz.quiz_data
+        mapel = quiz.mapel
+        topik = quiz.topik
+        
+        pdf = FPDF()
+        pdf.add_page()
+        
+        # --- HEADER ---
+        pdf.set_y(15)
+        pdf.set_text_color(0, 0, 0)
+        pdf.set_font("Arial", 'B', 11)
+        pdf.cell(190, 10, "LATIHAN SOAL & EVALUASI", ln=True, align='C')
+        
+        pdf.set_font("Arial", 'B', 18)
+        pdf.multi_cell(190, 12, clean_text(topik), align='C')
+        
+        pdf.set_font("Arial", 'I', 10)
+        pdf.cell(190, 8, clean_text(f"Mata Pelajaran: {mapel}"), ln=True, align='C')
+        
+        # Separator Line
+        pdf.ln(2)
+        pdf.set_draw_color(200, 200, 200)
+        pdf.line(20, pdf.get_y(), 190, pdf.get_y())
+        pdf.ln(10)
+        
+        # --- QUESTIONS ---
+        questions = quiz_data.get("questions", [])
+        for q in questions:
+            if pdf.get_y() > 250:
+                pdf.add_page()
+
+            pdf.set_x(10)
+            pdf.set_font("Arial", 'B', 11)
+            no = q.get('no', '')
+            txt = clean_text(f"{no}. {q.get('pertanyaan', '')}")
+            pdf.multi_cell(pdf.epw, 8, txt)
+            
+            pdf.ln(2)
+            pdf.set_font("Arial", '', 10)
+            options = q.get("options", {})
+            for key, val in options.items():
+                pdf.set_x(10)
+                opt_txt = clean_text(f"   {key}. {val}")
+                pdf.multi_cell(pdf.epw, 7, opt_txt)
+            
+            pdf.ln(5)
+
+        # --- ANSWER KEY PAGE ---
+        pdf.add_page()
+        pdf.set_font("Arial", 'B', 14)
+        pdf.cell(0, 10, "KUNCI JAWABAN & PENJELASAN", ln=True, align='C')
+        pdf.ln(5)
+        
+        pdf.set_font("Arial", '', 10)
+        for q in questions:
+            if pdf.get_y() > 260:
+                pdf.add_page()
+
+            pdf.set_x(10)
+            pdf.set_font("Arial", 'B', 10)
+            pdf.cell(0, 8, clean_text(f"Nomor {q.get('no', '')}: {q.get('kunci_jawaban', '')}"), ln=True)
+            
+            penjelasan = q.get('penjelasan', '').strip()
+            if penjelasan and len(penjelasan) > 2:
+                pdf.set_x(10)
+                pdf.set_font("Arial", 'I', 9)
+                pdf.set_text_color(80, 80, 80)
+                pdf.multi_cell(pdf.epw, 6, clean_text(f"Penjelasan: {penjelasan}"))
+                pdf.set_text_color(0, 0, 0)
+            
+            pdf.ln(3)
+
+        pdf_bytes = pdf.output()
+        safe_topik = re.sub(r'[^\w\s-]', '', topik).strip().replace(" ", "_")
+        return StreamingResponse(
+            io.BytesIO(pdf_bytes),
+            media_type="application/pdf",
+            headers={
+                "Content-Disposition": f"attachment; filename=Quiz_{safe_topik}.pdf",
+                "Access-Control-Expose-Headers": "Content-Disposition"
+            }
         )
     except Exception as e:
         traceback.print_exc()
@@ -884,6 +1147,16 @@ async def get_quiz_history(
     db: AsyncSession = Depends(get_db)
 ):
     from app.models.rpp_data import SavedQuiz
+    from app.models.payment import Subscription
+    
+    # Gate: Paid Only
+    sub_res = await db.execute(select(Subscription).where(
+        Subscription.user_id == user_id, Subscription.is_active == True, Subscription.end_date > get_jakarta_time()
+    ))
+    sub = sub_res.scalars().first()
+    if not sub or sub.plan_type == "free":
+        return []
+        
     stmt = select(SavedQuiz).where(SavedQuiz.user_id == user_id).order_by(SavedQuiz.created_at.desc())
     result = await db.execute(stmt)
     history = result.scalars().all()

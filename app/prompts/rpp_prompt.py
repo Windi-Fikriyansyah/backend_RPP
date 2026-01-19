@@ -92,6 +92,10 @@ CONSTRAINT:
 - DILARANG MENGGUNAKAN code blocks (```) untuk teks normal.
 - Gunakan Heading Markdown (##, ###) untuk memisahkan bagian.
 - Gunakan Tabel Markdown untuk bagian yang membutuhkan perbandingan atau data terstruktur.
+- DILARANG menggunakan format LaTeX (seperti $\\text{{...}}$) ataupun simbol dollar ($).
+- DILARANG menggunakan `\\underline`, `\\hspace`, atau perintah LaTeX lainnya.
+- Tuliskan rumus matematika dengan angka dan simbol biasa. Contoh: "20 - ... = 12" (JANGAN gunakan format $...$).
+- Untuk titik-titik isian, gunakan garis bawah panjang manual "__________" atau titik-titik "...".
 
 STRICT OUTPUT RULES:
 1. LANGSUNG mulai dengan Header Markdown "# MODUL AJAR...".
