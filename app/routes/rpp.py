@@ -131,12 +131,16 @@ async def generate_rpp(
     # 2. Call AI
     result_text = await gemini_client.generate_content(prompt)
     
-    # 3. Log Generation (Success)
+    # 3. Validation: Stop if AI returned an error string
+    if result_text.startswith("Error"):
+        raise HTTPException(status_code=500, detail=result_text)
+    
+    # 4. Log Generation (Success)
     new_log = GenerationLog(user_id=user_id, plan_type=plan_type)
     db.add(new_log)
     await db.commit()
     
-    # 4. Return
+    # 5. Return
     return RPPResponse(
         data=RPPData(
             rpp_markdown=result_text,
@@ -159,6 +163,10 @@ async def save_rpp(
     user_id: int = Depends(get_current_user_id)
 ):
     from app.models.rpp_data import SavedRPP
+    
+    # Validation: Don't save if content is an error message
+    if req.content_markdown.startswith("Error"):
+        raise HTTPException(status_code=400, detail="Tidak dapat menyimpan konten yang berisi pesan error.")
     
     new_rpp = SavedRPP(
         user_id=user_id,
@@ -388,6 +396,10 @@ Struktur JSON:
         # 2. Call AI
         print(f"DEBUG: Generating Quiz for {req.topik}...")
         response_text = await gemini_client.generate_content(prompt)
+        
+        # 3. Validation: Stop if AI returned an error string
+        if response_text.startswith("Error"):
+            raise HTTPException(status_code=500, detail=response_text)
         
         # Clean JSON
         match = re.search(r'(\{.*\}|\[.*\])', response_text, re.DOTALL)
