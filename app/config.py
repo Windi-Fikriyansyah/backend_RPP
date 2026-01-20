@@ -14,5 +14,7 @@ class Config:
     TRIPAY_MERCHANT_CODE = os.getenv("TRIPAY_MERCHANT_CODE", "T12345")
     TRIPAY_MODE = os.getenv("TRIPAY_MODE", "SANDBOX") # SANDBOX or PRODUCTION
     
-    FRONTEND_URL = os.getenv("FRONTEND_URL", "https://apirpp.sekolahliterasi.com")
-    BACKEND_URL = os.getenv("BACKEND_URL", "https://apirpp.sekolahliterasi.com")
+    FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
+    BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:8000")
+    ENV = os.getenv("ENV", "DEVELOPMENT")
+    SESSION_COOKIE_DOMAIN = os.getenv("SESSION_COOKIE_DOMAIN", None)

@@ -41,16 +41,13 @@ async def global_exception_handler(request: Request, exc: Exception):
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")
 
-# Tentukan domain cookie jika di production agar bisa dishare antar subdomain
-session_domain = ".sekolahliterasi.com" if os.getenv("ENV") == "PRODUCTION" else None
-
 app.add_middleware(
     SessionMiddleware, 
     secret_key=Config.SECRET_KEY, 
-    max_age=3600*24, 
-    https_only=os.getenv("ENV") == "PRODUCTION",
-    same_site="lax",  # Penting untuk cross-subdomain
-    domain=session_domain
+    max_age=3600*24 * 7, # 7 Days
+    https_only=Config.ENV == "PRODUCTION",
+    same_site="lax",
+    domain=Config.SESSION_COOKIE_DOMAIN
 )
 
 # 2. CORS
