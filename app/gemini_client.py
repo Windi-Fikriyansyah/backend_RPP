@@ -11,33 +11,33 @@ class Config:
     DATABASE_URL = os.getenv("DATABASE_URL")
     SECRET_KEY = os.getenv("SECRET_KEY", "unsafe-secret-key")
     # Use OpenRouter model ID for Gemini 2.5 Flash
-    GEMINI_MODEL = "gemini-2.5-flash" 
-    # GEMINI_MODEL = "google/gemini-2.5-flash" 
+    # GEMINI_MODEL = "gemini-2.5-flash" 
+    GEMINI_MODEL = "google/gemini-2.5-flash" 
 
 class GeminiClient:
-    # def __init__(self):
-    #     if not Config.OPENROUTER_API_KEY:
-    #         print("Warning: OPENROUTER_API_KEY not set")
-    #         self.client = None
-    #     else:
-    #         # Initialize AsyncOpenAI client pointing to OpenRouter
-    #         self.client = AsyncOpenAI(
-    #             api_key=Config.OPENROUTER_API_KEY,
-    #             base_url="https://openrouter.ai/api/v1"
-    #         )
-
-
-
     def __init__(self):
-        if not Config.GEMINI_API_KEY:
-            print("Warning: GEMINI_API_KEY not set")
+        if not Config.OPENROUTER_API_KEY:
+            print("Warning: OPENROUTER_API_KEY not set")
             self.client = None
         else:
-            # GANTI BASE_URL ke Google AI Studio (OpenAI Compatible)
+            # Initialize AsyncOpenAI client pointing to OpenRouter
             self.client = AsyncOpenAI(
-                api_key=Config.GEMINI_API_KEY,
-                base_url="https://generativelanguage.googleapis.com/v1beta/openai/"
+                api_key=Config.OPENROUTER_API_KEY,
+                base_url="https://openrouter.ai/api/v1"
             )
+
+
+
+    # def __init__(self):
+    #     if not Config.GEMINI_API_KEY:
+    #         print("Warning: GEMINI_API_KEY not set")
+    #         self.client = None
+    #     else:
+    #         # GANTI BASE_URL ke Google AI Studio (OpenAI Compatible)
+    #         self.client = AsyncOpenAI(
+    #             api_key=Config.GEMINI_API_KEY,
+    #             base_url="https://generativelanguage.googleapis.com/v1beta/openai/"
+    #         )
 
     async def generate_content(self, prompt: str) -> str:
         if not self.client:
