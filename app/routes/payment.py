@@ -206,9 +206,10 @@ async def payment_callback(request: Request, db: AsyncSession = Depends(get_db))
         if status == "PAID":
             trx.payment_status = PaymentStatus.PAID.value
             
-            # 6. Activate Subscription
+            # 6. Activate/Extend Subscription
             plan_id = trx.plan_id or "monthly"
             plan = AVAILABLE_PLANS.get(plan_id, AVAILABLE_PLANS["monthly"])
+            now = get_jakarta_time()
             
             # Check existing subscription
             sub_res = await db.execute(select(Subscription).where(Subscription.user_id == trx.user_id))
@@ -217,12 +218,20 @@ async def payment_callback(request: Request, db: AsyncSession = Depends(get_db))
             if not sub:
                 sub = Subscription(user_id=trx.user_id)
                 db.add(sub)
+                sub.start_date = now
+                sub.end_date = now + timedelta(days=plan.duration_days)
+            else:
+                # If still active, extend from existing end_date
+                if sub.is_active and sub.end_date and sub.end_date > now:
+                    sub.end_date = sub.end_date + timedelta(days=plan.duration_days)
+                else:
+                    # If expired or inactive, reset from now
+                    sub.start_date = now
+                    sub.end_date = now + timedelta(days=plan.duration_days)
                 
             sub.plan_type = plan.id
-            sub.start_date = get_jakarta_time()
-            sub.end_date = get_jakarta_time() + timedelta(days=plan.duration_days)
             sub.is_active = True
-            logger.info(f"Subscription activated for user {trx.user_id}")
+            logger.info(f"Subscription activated/extended for user {trx.user_id}. New end_date: {sub.end_date}")
             
         elif status == "EXPIRED":
             trx.payment_status = PaymentStatus.EXPIRED.value
