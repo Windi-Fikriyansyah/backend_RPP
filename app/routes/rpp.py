@@ -661,18 +661,31 @@ async def export_rpp_pdf(req: ExportRPPRequest):
                     i += 1
                 
                 if headers or table_data:
-                    pdf.ln(5)
-                    pdf.set_line_width(0.2)
+                    pdf.ln(2)
+                    # Check if it's the Identity table (Informasi Umum)
+                    is_identity = any("Identitas" in h for h in headers) or (len(headers) == 2 and any(k in headers[0] for k in ["Penyusun", "Instansi"]))
+                    
+                    if is_identity:
+                        pdf.set_line_width(0)
+                    else:
+                        pdf.set_line_width(0.1)
+
                     with pdf.table(width=190, padding=2, line_height=7) as table:
-                        if headers:
+                        if headers and not is_identity:
                             header_row = table.row()
                             pdf.set_font("Arial", 'B', 10)
+                            pdf.set_fill_color(245, 245, 245)
                             for h in headers: header_row.cell(h)
+                        
                         pdf.set_font("Arial", '', 10)
                         for r_data in table_data:
                             row = table.row()
-                            for c in r_data: row.cell(c)
-                    pdf.ln(5)
+                            for r_idx, c in enumerate(r_data):
+                                if is_identity and r_idx == 0:
+                                    pdf.set_font("Arial", 'B', 10)
+                                row.cell(c)
+                                if is_identity: pdf.set_font("Arial", '', 10)
+                    pdf.ln(2)
                 continue
 
             if not line:
@@ -680,31 +693,49 @@ async def export_rpp_pdf(req: ExportRPPRequest):
                 i += 1
                 continue
             
-            # Header handling
+            # Header handling (Hierarchy)
             if line.startswith('#'):
                 clean_header = clean_markdown_symbols(re.sub(r'^#+\s*', '', line))
-                if line.startswith('###'):
-                    pdf.set_font("Arial", 'B', 12)
-                    pdf.ln(3)
-                elif line.startswith('##'):
-                    pdf.set_font("Arial", 'B', 13)
+                
+                if line.startswith('###'): # Level A, B, C
                     pdf.ln(4)
-                else: 
+                    pdf.set_font("Arial", 'B', 12)
+                elif line.startswith('##'): # Level I, II, III
+                    pdf.ln(6)
                     pdf.set_font("Arial", 'B', 14)
+                    # Draw a thin line above main sections
+                    pdf.set_draw_color(230, 230, 230)
+                    pdf.line(10, pdf.get_y(), 200, pdf.get_y())
+                    pdf.ln(2)
+                else: # Title #
+                    pdf.set_font("Arial", 'B', 16)
                     pdf.ln(5)
                 
                 pdf.set_x(10)
-                pdf.multi_cell(0, 8, clean_text(clean_header))
+                # Auto center the main title if it's level 1
+                align = 'C' if not line.startswith('##') else 'L'
+                pdf.multi_cell(0, 8, clean_text(clean_header), align=align)
                 pdf.set_font("Arial", '', 11)
             
-            # List handling (broader detection)
-            elif re.match(r'^[\-\*•]\s*', line):
-                # Extract text after any bullet-like symbol
-                text = re.sub(r'^[\-\*•]\s*', '', line)
+            # Ordered List handling (Roman/Alpha/Numeric)
+            elif re.match(r'^\s*(\d+|[a-zA-Z]|[ivxIVX]+)\.\s+', line):
+                match = re.match(r'^\s*(\d+|[a-zA-Z]|[ivxIVX]+)\.\s+(.*)', line)
+                marker = match.group(1)
+                text = clean_markdown_symbols(match.group(2))
+                
+                # Determine indentation based on marker type or leading spaces
+                indent = 10 if line.startswith('   ') else 0
+                pdf.set_x(15 + indent)
+                pdf.multi_cell(0, 7, clean_text(f"{marker}. {text}"))
+                pdf.set_x(10)
+
+            # Unordered List handling
+            elif re.match(r'^\s*[\-\*•]\s*', line):
+                text = re.sub(r'^\s*[\-\*•]\s*', '', line)
                 text = clean_markdown_symbols(text)
-                pdf.set_x(15)
-                # Use a proper bullet character
-                pdf.multi_cell(0, 7, clean_text(f"\x95 {text}")) # \x95 is bullet in many latin-1 encodings
+                indent = 20 if line.startswith('   ') else 15
+                pdf.set_x(indent)
+                pdf.multi_cell(0, 7, clean_text(f"\x95 {text}"))
                 pdf.set_x(10)
             
             # Regular text
@@ -789,7 +820,7 @@ async def export_rpp_word(
         while i < len(lines):
             line = lines[i].strip()
             
-            # Table detection (More robust regex check)
+            # Table detection
             is_table_start = '|' in line and i + 1 < len(lines) and re.match(r'^\s*\|?[:\-\s|]+\|?[:\-\s|]*\s*$', lines[i+1])
             if is_table_start:
                 header_line = line.strip().strip('|')
@@ -811,9 +842,14 @@ async def export_rpp_word(
                 
                 if headers or rows:
                     table = doc.add_table(rows=0, cols=len(headers))
-                    table.style = 'Table Grid'
                     
-                    if headers:
+                    # Check if it's the Identity table (Informasi Umum)
+                    is_identity = any("Identitas" in h for h in headers) or (len(headers) == 2 and any(k in headers[0] for k in ["Penyusun", "Instansi"]))
+                    
+                    if not is_identity:
+                        table.style = 'Table Grid'
+                    
+                    if headers and not is_identity:
                         header_row = table.add_row().cells
                         for idx, hs in enumerate(headers):
                             p = header_row[idx].paragraphs[0]
@@ -825,31 +861,75 @@ async def export_rpp_word(
                         cells = table.add_row().cells
                         for idx, val in enumerate(row_data):
                             p = cells[idx].paragraphs[0]
-                            r = p.add_run(val)
+                            if is_identity and idx == 0:
+                                r = p.add_run(val)
+                                r.bold = True
+                            else:
+                                r = p.add_run(val)
                             r.font.color.rgb = RGBColor(0, 0, 0)
+                    
+                    doc.add_paragraph() # Add space after table
                 continue
 
             if not line:
                 i += 1
                 continue
             
-            # Header handling
+            # Header handling (Hierarchy)
             if line.startswith('#'):
-                # Robustly remove any number of # at the start
                 clean_header = re.sub(r'^#+\s*', '', line)
                 level = 1
                 if line.startswith('###'): level = 3
                 elif line.startswith('##'): level = 2
                 
                 h = doc.add_heading(clean_header, level=level)
+                if level == 1:
+                    h.alignment = 1 # Center main title
+                
                 # Set heading color to black
                 for run in h.runs:
                     run.font.color.rgb = RGBColor(0, 0, 0)
             
-            # List handling
-            elif line.startswith('- ') or line.startswith('* '):
+            # Ordered List handling (Roman/Alpha/Numeric)
+            elif re.match(r'^\s*(\d+|[a-zA-Z]|[ivxIVX]+)\.\s+', line):
+                match = re.match(r'^\s*(\d+|[a-zA-Z]|[ivxIVX]+)\.\s+(.*)', line)
+                marker = match.group(1)
+                text = match.group(2)
+                
+                # We use a custom paragraph for nested lists as docx styles can be finicky
+                p = doc.add_paragraph()
+                # Indentation based on logic (simple implementation)
+                if line.startswith('   '):
+                    p.paragraph_format.left_indent = Pt(36)
+                else:
+                    p.paragraph_format.left_indent = Pt(18)
+                
+                # Check for Roman (I., II.) or Alpha (A., B.) to make them look like headings if needed
+                is_roman = bool(re.match(r'^[IVX]+$', marker))
+                is_alpha = bool(re.match(r'^[A-Z]$', marker))
+                
+                r_marker = p.add_run(f"{marker}. ")
+                if is_roman or is_alpha:
+                    r_marker.bold = True
+                
+                # Handle bold parts in text
+                parts = re.split(r'(\*\*.*?\*\*)', text)
+                for part in parts:
+                    if part.startswith('**') and part.endswith('**'):
+                        r = p.add_run(part[2:-2])
+                        r.bold = True
+                    else:
+                        r = p.add_run(part)
+                    r.font.color.rgb = RGBColor(0, 0, 0)
+
+            # Unordered List handling (Bullets)
+            elif re.match(r'^\s*[\-\*•]\s*', line):
                 p = doc.add_paragraph(style='List Bullet')
-                text = re.sub(r'^[\-\*]\s*', '', line)
+                text = re.sub(r'^\s*[\-\*•]\s*', '', line)
+                
+                if line.startswith('   '):
+                    p.paragraph_format.left_indent = Pt(54)
+                
                 # Handle bold parts
                 parts = re.split(r'(\*\*.*?\*\*)', text)
                 for part in parts:

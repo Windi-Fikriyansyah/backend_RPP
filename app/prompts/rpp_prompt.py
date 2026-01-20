@@ -48,31 +48,42 @@ STRUKTUR OUTPUT (MARKDOWN):
 # MODUL AJAR KURIKULUM MERDEKA
 
 ## I. INFORMASI UMUM
-- Identitas Modul
-- Kompetensi Awal
-- Profil Pelajar Pancasila
-- Sarana dan Prasarana
-- Target Peserta Didik
-- Model Pembelajaran
+
+| Identitas Modul | |
+| :--- | :--- |
+| **Penyusun** | {data.nama_guru} |
+| **Instansi** | {data.nama_sekolah} |
+| **Tahun Penyusunan** | {current_year} |
+| **Jenjang / Kelas** | {data.jenjang} / {data.kelas} |
+| **Mata Pelajaran** | {data.mapel} |
+| **Fase / Elemen** | {data.fase} / {data.elemen} |
+| **Topik** | {data.topik} |
+| **Alokasi Waktu** | {data.alokasi_waktu} |
+
+A. Kompetensi Awal
+B. Profil Pelajar Pancasila
+C. Sarana dan Prasarana
+D. Target Peserta Didik
+E. Model Pembelajaran
 
 ## II. KOMPONEN INTI
-1. Tujuan Pembelajaran
-2. Pemahaman Bermakna
-3. Pertanyaan Pemantik
-4. Kegiatan Pembelajaran
-   A. Kegiatan Pendahuluan & **Asesmen Awal** (Diagnostik Kognitif/Non-Kognitif singkat)
-   B. Kegiatan Inti (Sintaks {data.model_pembelajaran} dengan diferensiasi sesuai elemen {data.elemen})
-   C. Kegiatan Penutup (Refleksi & Kesimpulan)
-5. Asesmen
+A. Tujuan Pembelajaran
+B. Pemahaman Bermakna
+C. Pertanyaan Pemantik
+D. Kegiatan Pembelajaran
+   1. Kegiatan Pendahuluan & **Asesmen Awal** (Diagnostik Kognitif/Non-Kognitif singkat)
+   2. Kegiatan Inti (Sintaks {data.model_pembelajaran} dengan diferensiasi sesuai elemen {data.elemen})
+   3. Kegiatan Penutup (Refleksi & Kesimpulan)
+E. Asesmen
    - Asesmen Formatif (Awal & Proses)
    - Asesmen Sumatif (Lingkup Materi) ({penilaian_str})
-6. Pengayaan dan Remedial
+F. Pengayaan dan Remedial
 
 ## III. LAMPIRAN
-- Lembar Kerja Peserta Didik (LKPD) - *Buatkan konten spesifik sesuai elemen {data.elemen}*
-- Bahan Bacaan Guru & Peserta Didik
-- Glosarium
-- Daftar Pustaka
+A. Lembar Kerja Peserta Didik (LKPD) - *Buatkan konten spesifik sesuai elemen {data.elemen}*
+B. Bahan Bacaan Guru & Peserta Didik
+C. Glosarium
+D. Daftar Pustaka
 
 ---
 
@@ -90,8 +101,11 @@ CONSTRAINT:
 - Output Wajib Rapi dan Profesional.
 - DILARANG MENGGUNAKAN blockquote (>) berlebihan.
 - DILARANG MENGGUNAKAN code blocks (```) untuk teks normal.
-- Gunakan Heading Markdown (##, ###) untuk memisahkan bagian.
-- Gunakan Tabel Markdown untuk bagian yang membutuhkan perbandingan atau data terstruktur.
+- Gunakan Heading Markdown (## I., ## II.) untuk level Romawi.
+- Gunakan Heading Markdown (### A., ### B.) untuk level Huruf Kapital.
+- Gunakan list angka (1., 2.) untuk detail level ketiga.
+- Gunakan bullet points ( - ) untuk detail level keempat.
+- Gunakan Tabel Markdown untuk bagian Identitas di atas.
 - DILARANG menggunakan format LaTeX (seperti $\\text{{...}}$) ataupun simbol dollar ($).
 - DILARANG menggunakan `\\underline`, `\\hspace`, atau perintah LaTeX lainnya.
 - Tuliskan rumus matematika dengan angka dan simbol biasa. Contoh: "20 - ... = 12" (JANGAN gunakan format $...$).
