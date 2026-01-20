@@ -49,7 +49,13 @@ class CreateTransactionRequest(BaseModel):
 
 # Defines available plans (Hardcoded for single source of truth)
 AVAILABLE_PLANS = {
-    "monthly": Plan(id="monthly", name="Paket Pro", price=39000, duration_days=30, features=["Unlimited RPP", "Export Word"]),
+    # New Plans (Matching Frontend)
+    "standard": Plan(id="standard", name="Paket Standar", price=29000, duration_days=30, features=["10 RPP/bulan", "Export Word & PDF", "Buat Soal"]),
+    "pro": Plan(id="pro", name="Paket Pro", price=59000, duration_days=30, features=["25 RPP/bulan", "Kunci + Pembahasan", "Prioritas"]),
+    "premium": Plan(id="premium", name="Paket Premium", price=129000, duration_days=30, features=["60 RPP/bulan", "Download Word Soal", "Support Prioritas"]),
+    
+    # Legacy/Old Plans (Keep for compatibility)
+    "monthly": Plan(id="monthly", name="Paket Pro (Old)", price=39000, duration_days=30, features=["Unlimited RPP", "Export Word"]),
     "yearly": Plan(id="yearly", name="Paket Tahunan", price=450000, duration_days=365, features=["Hemat 25%", "Priority Support"]),
     "school": Plan(id="school", name="Paket Sekolah", price=299000, duration_days=30, features=["Up to 50 Guru", "Admin Dashboard"])
 }
