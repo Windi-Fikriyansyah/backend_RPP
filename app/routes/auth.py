@@ -112,7 +112,7 @@ async def google_callback(request: Request, db: AsyncSession = Depends(get_db)):
     from starlette.responses import RedirectResponse
     from app.config import Config
     frontend_url = Config.FRONTEND_URL # URL Next.js
-    return RedirectResponse(url=frontend_url)
+    return RedirectResponse(url=f"{frontend_url}/buat-rpp")
 
 @router.get("/me", response_model=UserResponse)
 async def get_current_user(request: Request, db: AsyncSession = Depends(get_db)):
